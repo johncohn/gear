@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 4.1
+  Version: 4.2
   Last Modified: 2026-05-31
 
   Changelog:
+    v4.2 (2026-05-31) - Set all changeovers to 0: servos stopped when nobody
+                        present, spin up as person approaches. Varied slope
+                        magnitudes for layered activation at different ranges.
     v4.1 (2026-05-31) - ANSI terminal display: 16 centered servo bars + distance
                         bar, redrawn in place at 2Hz. Requires ANSI terminal
                         (screen/PuTTY/CoolTerm), not Arduino Serial Monitor.
@@ -83,23 +86,27 @@
 struct ServoConfig { float changeover; float slope; };
 
 ServoConfig channels[NUM_CHANNELS] = {
-  //  ch    changeover   slope
-  /*  0 */ {  400,       0.12f },
-  /*  1 */ {  400,      -0.12f },
-  /*  2 */ {  800,       0.10f },
-  /*  3 */ {  800,      -0.10f },
-  /*  4 */ { 1200,       0.09f },
-  /*  5 */ { 1200,      -0.09f },
-  /*  6 */ { 1800,       0.08f },
-  /*  7 */ { 1800,      -0.08f },
-  /*  8 */ { 2500,       0.07f },
-  /*  9 */ { 2500,      -0.07f },
-  /* 10 */ { 3200,       0.06f },
-  /* 11 */ { 3200,      -0.06f },
-  /* 12 */ { 4000,       0.05f },
-  /* 13 */ { 4000,      -0.05f },
-  /* 14 */ { 5000,       0.04f },
-  /* 15 */ { 5000,      -0.04f },
+  //  ch   changeover   slope
+  //  All changeovers = 0 so every servo starts stopped when nobody is
+  //  present and spins up as emaVal rises (person gets closer).
+  //  Alternating slope signs → alternating CW/CCW directions.
+  //  Larger slope magnitude → reaches full speed at greater distance.
+  /*  0 */ { 0,  0.015f },   // gentlest — full speed only when very close
+  /*  1 */ { 0, -0.015f },
+  /*  2 */ { 0,  0.025f },
+  /*  3 */ { 0, -0.025f },
+  /*  4 */ { 0,  0.035f },
+  /*  5 */ { 0, -0.035f },
+  /*  6 */ { 0,  0.050f },
+  /*  7 */ { 0, -0.050f },
+  /*  8 */ { 0,  0.070f },
+  /*  9 */ { 0, -0.070f },
+  /* 10 */ { 0,  0.090f },
+  /* 11 */ { 0, -0.090f },
+  /* 12 */ { 0,  0.120f },
+  /* 13 */ { 0, -0.120f },
+  /* 14 */ { 0,  0.150f },   // most aggressive — full speed at mid-range
+  /* 15 */ { 0, -0.150f },
 };
 
 // ---------------------------------------------------------------------------
