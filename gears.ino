@@ -1,10 +1,12 @@
 /******************************************************************************
   gears.ino
 
-  Version: 3.2
+  Version: 3.3
   Last Modified: 2026-05-31
 
   Changelog:
+    v3.3 (2026-05-31) - Lower EMA_ALPHA 0.25→0.1 for ~300ms smoothing to
+                        suppress occasional noise spikes at far range.
     v3.2 (2026-05-31) - Remove autoscaling. Fixed MAX_SIGNAL=10000 based on
                         real calibration: 1ft≈6000, 3ft≈2100.
     v3.1 (2026-05-31) - Auto-scale to session peak — removed in v3.2.
@@ -110,8 +112,9 @@
 
 STHS34PF80_I2C mySensor;
 
-// EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
-#define EMA_ALPHA    0.25f
+// EMA smoothing on raw signal. 0.1 at 30Hz ≈ 300ms — enough to kill
+// noise spikes at far range while still tracking real movement.
+#define EMA_ALPHA    0.1f
 
 // Total bar chars. Leaves ~20 for "  raw:XXXXX" on a 120-col line.
 #define MAX_BARS     100
