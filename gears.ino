@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 4.0
+  Version: 4.1
   Last Modified: 2026-05-31
 
   Changelog:
+    v4.1 (2026-05-31) - ANSI terminal display: 16 centered servo bars + distance
+                        bar, redrawn in place at 2Hz. Requires ANSI terminal
+                        (screen/PuTTY/CoolTerm), not Arduino Serial Monitor.
     v4.0 (2026-05-31) - Add PCA9685 16-channel PWM servo driver. Each channel
                         configured via ServoConfig table (changeover + slope).
                         All servos stop when presence signal drops below
@@ -106,10 +109,11 @@ ServoConfig channels[NUM_CHANNELS] = {
 STHS34PF80_I2C       mySensor;
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire1);
 
-int16_t presenceVal    = 0;
-float   emaVal         = 0.0f;
-bool    emaReady       = false;
-int     sessionMaxBars = 0;
+int16_t presenceVal       = 0;
+float   emaVal            = 0.0f;
+bool    emaReady          = false;
+int     sessionMaxBars    = 0;
+int     servoPwm[NUM_CHANNELS];   // last computed PWM per channel, for display
 unsigned long lastPrintMs = 0;
 
 // ---------------------------------------------------------------------------
@@ -162,7 +166,65 @@ void updateServos()
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
         }
         pwm.setPWM(ch, 0, pwmVal);
+        servoPwm[ch] = pwmVal;
     }
+}
+
+// ANSI display — use an ANSI-capable terminal, NOT Arduino Serial Monitor.
+// On macOS:  screen /dev/cu.usbmodem<XXXX> 115200
+// On Windows: PuTTY or CoolTerm with 115200 baud
+void printDisplay()
+{
+    const int HALF = 20;   // chars on each side of the center line
+
+    // Clear screen and jump to top-left
+    Serial.print("\033[2J\033[H");
+
+    // --- Servo bars ---
+    for (int ch = 0; ch < NUM_CHANNELS; ch++)
+    {
+        // Normalize pwmVal to -HALF..+HALF
+        int p = servoPwm[ch];
+        int bars;
+        if (p >= SERVO_STOP)
+            bars = (int)((float)(p - SERVO_STOP) / (SERVO_MAX - SERVO_STOP) * HALF);
+        else
+            bars = (int)((float)(p - SERVO_STOP) / (SERVO_STOP - SERVO_MIN) * HALF);
+        bars = constrain(bars, -HALF, HALF);
+
+        Serial.print("ch");
+        if (ch < 10) Serial.print(" ");
+        Serial.print(ch);
+        Serial.print("  ");
+
+        // Left side: positions -HALF..-1, '#' if position >= bars (fills toward center)
+        for (int i = -HALF; i < 0; i++)
+            Serial.print(i >= bars ? '#' : ' ');
+
+        Serial.print('|');
+
+        // Right side: positions 1..HALF, '#' if position <= bars
+        for (int i = 1; i <= HALF; i++)
+            Serial.print(i <= bars ? '#' : ' ');
+
+        Serial.println();
+    }
+
+    // --- Distance bar ---
+    Serial.println();
+    float signal   = abs(emaVal);
+    float logRatio = log(max(1.0f, signal)) / log((float)MAX_SIGNAL);
+    int   cur      = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
+    if (cur > sessionMaxBars) sessionMaxBars = cur;
+
+    Serial.print("dist  ");
+    for (int i = 0; i < cur;              i++) Serial.print('#');
+    for (int i = cur; i < sessionMaxBars; i++) Serial.print('-');
+    if (sessionMaxBars > cur)                  Serial.print('|');
+    Serial.print("  raw:");
+    Serial.print(presenceVal);
+    if (abs(emaVal) < PRESENCE_CUTOFF) Serial.print("  [no presence]");
+    Serial.println();
 }
 
 // ---------------------------------------------------------------------------
@@ -224,22 +286,11 @@ void loop()
 
         updateServos();
 
-        // Serial bar display at 2Hz
+        // Redraw display at 2Hz
         if (millis() - lastPrintMs >= 500)
         {
             lastPrintMs = millis();
-
-            float signal   = abs(emaVal);
-            float logRatio = log(max(1.0f, signal)) / log((float)MAX_SIGNAL);
-            int   cur      = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
-            if (cur > sessionMaxBars) sessionMaxBars = cur;
-
-            for (int i = 0; i < cur;              i++) Serial.print('#');
-            for (int i = cur; i < sessionMaxBars; i++) Serial.print('-');
-            if (sessionMaxBars > cur)                  Serial.print('|');
-
-            Serial.print("  raw:");
-            Serial.println(presenceVal);
+            printDisplay();
         }
     }
 }
