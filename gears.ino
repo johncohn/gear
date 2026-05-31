@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.1
+  Version: 1.2
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.2 (2026-05-31) - Added while(!Serial) guard after Serial.begin() so
+                        output isn't lost on native USB boards before the
+                        serial connection is established.
     v1.1 (2026-05-31) - Added verbose debug output: I2C bus scan at startup,
                         per-step [INIT] logging, [HEARTBEAT] every 5s,
                         [STATUS] flag dump on every data-ready event, and
@@ -93,6 +96,7 @@ void i2cScan()
 void setup()
 {
     Serial.begin(115200);
+    while (!Serial) { ; }  // wait for USB serial port to connect (needed on native USB boards)
     Serial.println("----------------------------------------");
     Serial.println("STHS34PF80 Example 1: Basic Readings");
     Serial.println("----------------------------------------");
