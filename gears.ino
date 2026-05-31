@@ -1,13 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.1
+  Version: 2.2
   Last Modified: 2026-05-31
 
   Changelog:
-    v2.1 (2026-05-31) - Use \r to overwrite single line during tracking so
-                        output never scrolls. Show running session max next
-                        to current distance. Print session max on lost.
+    v2.2 (2026-05-31) - Replace \r approach (unreliable in Serial Monitor)
+                        with throttled println: max 5Hz updates while moving,
+                        session max recap every 3 seconds, clean lost line.
     v2.0 (2026-05-31) - Lower DETECT_THRESHOLD to 5. When below threshold,
                         print raw presenceVal once/sec for range calibration.
                         Print raw alongside distance when tracking.
@@ -103,6 +103,8 @@ float   emaPresence   = 0.0f;
 bool    handPresent   = false;
 float         lastPrintedMm  = 0.0f;
 float         sessionMaxMm   = 0.0f;
+unsigned long lastPrintMs    = 0;
+unsigned long lastStatsMs    = 0;
 unsigned long lastRawPrint   = 0;
 
 // Scan I2C bus and print all found device addresses
@@ -199,17 +201,26 @@ void loop()
 
       if(distMm > sessionMaxMm) sessionMaxMm = distMm;
 
-      if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM)
+      unsigned long now = millis();
+
+      // Print on movement, but no faster than 5Hz to avoid flooding
+      if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM && now - lastPrintMs >= 200)
       {
-        // \r overwrites the current line — distance never scrolls off screen
-        Serial.print("\r  Now: ");
+        Serial.print("Now: ");
         Serial.print(distMm, 0);
-        Serial.print(" mm   Max: ");
-        Serial.print(sessionMaxMm, 0);
         Serial.print(" mm   raw=");
-        Serial.print(presenceVal);
-        Serial.print("   ");   // trailing spaces wipe leftover chars from longer previous line
+        Serial.println(presenceVal);
         lastPrintedMm = distMm;
+        lastPrintMs   = now;
+      }
+
+      // Stats recap every 3 seconds so max stays visible even while scrolling
+      if(now - lastStatsMs >= 3000)
+      {
+        Serial.print(">>> MAX SO FAR: ");
+        Serial.print(sessionMaxMm, 0);
+        Serial.println(" mm <<<");
+        lastStatsMs = now;
       }
     }
     else
@@ -217,8 +228,6 @@ void loop()
       if(handPresent)
       {
         handPresent = false;
-        // Newline first so the lost message appears below the tracking line
-        Serial.println();
         Serial.print("-- lost --   session max: ");
         Serial.print(sessionMaxMm, 0);
         Serial.println(" mm");
@@ -228,9 +237,8 @@ void loop()
       if(millis() - lastRawPrint >= 1000)
       {
         lastRawPrint = millis();
-        Serial.print("\rno hand   raw=");
-        Serial.print(presenceVal);
-        Serial.print("   ");
+        Serial.print("no hand   raw=");
+        Serial.println(presenceVal);
       }
     }
   }
