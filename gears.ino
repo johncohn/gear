@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.4
+  Version: 2.5
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.5 (2026-05-31) - Cap distMm at MAX_RANGE_MM (3m) so bad calibration
+                        can't make a 40-segment bar. Add | at high water mark.
+                        Restore raw presenceVal to help calibrate SCALE.
     v2.4 (2026-05-31) - Replace numeric output with ASCII bar graph.
                         # = current distance (one per 25cm), - = gap to
                         high water mark. Redraws at 2Hz. mm values appended.
@@ -90,12 +93,16 @@
 STHS34PF80_I2C mySensor;
 
 // Calibration: distance_mm ≈ PRESENCE_SCALE_MM / presenceVal.
+// We don't have real calibration yet — raw value is printed so you can tune this.
 #define PRESENCE_SCALE_MM  50000.0f
+
+// Hard cap on displayed distance. Prevents uncalibrated values blowing up the bar.
+#define MAX_RANGE_MM       3000
 
 // EMA on raw presenceVal (linear space). 0.25 at 30Hz ≈ 100ms smoothing.
 #define EMA_ALPHA          0.25f
 
-// One # or - per BAR_STEP_MM. 250mm = one segment per 25cm.
+// One bar segment per BAR_STEP_MM. 250 = one segment per 25cm, max 12 segments at 3m.
 #define BAR_STEP_MM        250
 
 int16_t presenceVal  = 0;
@@ -183,25 +190,28 @@ void loop()
 
     if(emaPresence > 0)
     {
-      float distMm = PRESENCE_SCALE_MM / emaPresence;
+      // Cap to MAX_RANGE_MM so uncalibrated scale can't blow up the bar
+      float distMm = min(PRESENCE_SCALE_MM / emaPresence, (float)MAX_RANGE_MM);
       if(distMm > sessionMaxMm) sessionMaxMm = distMm;
 
-      // Redraw bar at 2Hz — fast enough to feel live, slow enough to read
       if(millis() - lastPrintMs >= 500)
       {
         lastPrintMs = millis();
 
-        int cur = max(1, (int)(distMm    / BAR_STEP_MM));
+        int cur = max(1, (int)(distMm      / BAR_STEP_MM));
         int hi  = max(cur, (int)(sessionMaxMm / BAR_STEP_MM));
 
-        for(int i = 0; i < cur; i++) Serial.print('#');
-        for(int i = cur; i < hi;  i++) Serial.print('-');
+        // # = current distance, - = gap to high water mark, | = high water mark
+        for(int i = 0; i < cur; i++)   Serial.print('#');
+        for(int i = cur; i < hi; i++)  Serial.print('-');
+        if(hi > cur) Serial.print('|');
 
         Serial.print("  ");
         Serial.print((int)distMm);
         Serial.print("mm  max:");
         Serial.print((int)sessionMaxMm);
-        Serial.println("mm");
+        Serial.print("mm  raw:");
+        Serial.println(presenceVal);
       }
     }
   }
