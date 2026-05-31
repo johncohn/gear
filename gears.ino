@@ -1,10 +1,15 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.5
+  Version: 1.6
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.6 (2026-05-31) - Convert presence to mm via inverse scale factor
+                        (PRESENCE_SCALE_MM / presenceVal). Rolling 8-sample
+                        average at 30Hz (~267ms smoothing). Print only when
+                        averaged distance changes more than DEADZONE_MM (50mm).
+                        Removed Motion! print.
     v1.5 (2026-05-31) - Set ODR to max 30Hz for fastest motion tracking.
                         Loop now only prints presence when value changes;
                         removed heartbeat and per-frame status spam.
@@ -63,11 +68,21 @@
 
 STHS34PF80_I2C mySensor;
 
-// Values to fill with presence and motion data
+// Calibration: distance_mm ≈ PRESENCE_SCALE / presenceVal (inverse relationship).
+// Hold an object at a known distance and adjust until readings match.
+#define PRESENCE_SCALE_MM  50000.0f
+
+// Rolling average window (samples at 30Hz, so 8 = ~267ms of smoothing)
+#define AVG_WINDOW  8
+
+// Only print when the averaged distance shifts by more than this
+#define DEADZONE_MM  50.0f
+
 int16_t presenceVal = 0;
-int16_t lastPresenceVal = 0;
-int16_t motionVal = 0;
-float temperatureVal = 0;
+float   avgBuffer[AVG_WINDOW] = {0};
+int     avgIndex  = 0;
+int     avgCount  = 0;
+float   lastPrintedAvg = 0.0f;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -147,20 +162,27 @@ void loop()
     if(status.pres_flag == 1)
     {
       mySensor.getPresenceValue(&presenceVal);
-      if(presenceVal != lastPresenceVal)
-      {
-        Serial.print("Presence: ");
-        Serial.print(presenceVal);
-        Serial.print(" cm^-1  (delta: ");
-        Serial.print(presenceVal - lastPresenceVal);
-        Serial.println(")");
-        lastPresenceVal = presenceVal;
-      }
-    }
 
-    if(status.mot_flag == 1)
-    {
-      Serial.println("Motion!");
+      if(presenceVal > 0)
+      {
+        float distMm = PRESENCE_SCALE_MM / (float)presenceVal;
+
+        avgBuffer[avgIndex] = distMm;
+        avgIndex = (avgIndex + 1) % AVG_WINDOW;
+        if(avgCount < AVG_WINDOW) avgCount++;
+
+        float sum = 0;
+        for(int i = 0; i < avgCount; i++) sum += avgBuffer[i];
+        float avg = sum / (float)avgCount;
+
+        if(fabs(avg - lastPrintedAvg) > DEADZONE_MM)
+        {
+          Serial.print("Distance: ");
+          Serial.print(avg, 1);
+          Serial.println(" mm");
+          lastPrintedAvg = avg;
+        }
+      }
     }
   }
 }
