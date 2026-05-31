@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.7
+  Version: 2.8
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.8 (2026-05-31) - Widen to 100-bar / 120-col. Lower CLOSE_SIGNAL to 50
+                        so far-distance low-signal values spread across more
+                        of the bar instead of saturating near max.
     v2.7 (2026-05-31) - Invert bar: far = more #, close = fewer #. Scale
                         to 60 chars so 3m fits on 80-col line with raw value.
     v2.6 (2026-05-31) - Drop mm conversion entirely. Bar shows raw signal
@@ -101,12 +104,12 @@ STHS34PF80_I2C mySensor;
 // EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
 #define EMA_ALPHA    0.25f
 
-// presenceVal that represents "as close as it gets" (0 bars).
-// Raise if bar is always full; lower if bar never empties up close.
-#define CLOSE_SIGNAL 300
+// presenceVal that maps to 0 bars (closest detectable range).
+// Raise if bar never empties up close; lower if it saturates before 3m.
+#define CLOSE_SIGNAL 50
 
-// Total bar width. Leaves ~20 chars for "  raw:XXXXX" on an 80-col line.
-#define MAX_BARS     60
+// Total bar width. Leaves ~20 chars for "  raw:XXXXX" on a 120-col line.
+#define MAX_BARS     100
 
 int16_t presenceVal    = 0;
 float   emaVal         = 0.0f;
