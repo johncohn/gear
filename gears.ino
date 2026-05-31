@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.3
+  Version: 1.4
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.4 (2026-05-31) - Fix begin() call: library signature is
+                        begin(uint8_t devAddr, TwoWire&), so must pass
+                        STHS34PF80_I2C_ADDRESS before Wire1.
     v1.3 (2026-05-31) - Target board is Adafruit QT Py RP2040. STEMMA QT
                         connector uses Wire1 (not Wire), so switched all I2C
                         calls to Wire1. Also kept while(!Serial) guard for
@@ -112,7 +115,7 @@ void setup()
     i2cScan();
 
     Serial.println("[INIT] Attempting mySensor.begin(Wire1)...");
-    if(mySensor.begin(Wire1) == false)
+    if(mySensor.begin(STHS34PF80_I2C_ADDRESS, Wire1) == false)
     {
       Serial.println("[ERROR] mySensor.begin() failed!");
       Serial.println("[ERROR] Check: is sensor powered? Is SDA/SCL connected?");
