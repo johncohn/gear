@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.8
+  Version: 2.9
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.9 (2026-05-31) - Switch to logarithmic bar scale so close (raw=500)
+                        and far (raw=5) both get even visual spread. Each
+                        doubling of distance moves the bar the same amount.
     v2.8 (2026-05-31) - Widen to 100-bar / 120-col. Lower CLOSE_SIGNAL to 50
                         so far-distance low-signal values spread across more
                         of the bar instead of saturating near max.
@@ -104,11 +107,11 @@ STHS34PF80_I2C mySensor;
 // EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
 #define EMA_ALPHA    0.25f
 
-// presenceVal that maps to 0 bars (closest detectable range).
-// Raise if bar never empties up close; lower if it saturates before 3m.
-#define CLOSE_SIGNAL 50
+// presenceVal at closest range (= 0 bars). Raise if bar never empties
+// when you're right on top of the sensor.
+#define MAX_SIGNAL   500
 
-// Total bar width. Leaves ~20 chars for "  raw:XXXXX" on a 120-col line.
+// Total bar chars. Leaves ~20 for "  raw:XXXXX" on a 120-col line.
 #define MAX_BARS     100
 
 int16_t presenceVal    = 0;
@@ -201,8 +204,10 @@ void loop()
     {
       lastPrintMs = millis();
 
-      // Invert: far away (low signal) = many #, close (high signal) = few #
-      int cur = MAX_BARS - constrain((int)(emaVal * MAX_BARS / CLOSE_SIGNAL), 0, MAX_BARS);
+      // Log scale: each doubling of distance moves the bar the same amount.
+      // log(MAX_SIGNAL) maps to 0 bars; log(1) maps to MAX_BARS.
+      float logRatio = log(max(1.0f, emaVal)) / log((float)MAX_SIGNAL);
+      int cur = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
       if(cur > sessionMaxBars) sessionMaxBars = cur;
 
       // # = current distance, - = gap to furthest point reached, | = high water mark
