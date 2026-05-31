@@ -1,29 +1,30 @@
 /******************************************************************************
-  Example1_BasicReadings.ino
-  
+  gears.ino
+
+  Version: 1.1
+  Last Modified: 2026-05-31
+
+  Changelog:
+    v1.1 (2026-05-31) - Added verbose debug output: I2C bus scan at startup,
+                        per-step [INIT] logging, [HEARTBEAT] every 5s,
+                        [STATUS] flag dump on every data-ready event, and
+                        tagged [PRESENCE] / [MOTION] / [TEMP] readings.
+    v1.0 (2023-09-19) - Initial release (SparkFun example, basic readings).
+
   Read human presence detection values from the STHS34PF80 sensor, print them
-  to terminal. Prints raw IR presence (cm^-1), if motion was detected, and 
+  to terminal. Prints raw IR presence (cm^-1), if motion was detected, and
   temperature in degrees C.
 
-  SparkFun STHS34PF80 Arduino Library
+  Based on SparkFun STHS34PF80 Arduino Library example by
   Madison Chodikov @ SparkFun Electronics
-  Original Creation Date: September 19th, 2023
   https://github.com/sparkfun/SparkFun_STHS34PF80_Arduino_Library
 
   Development environment specifics:
 
   IDE: Arduino 2.2.1
-  Hardware Platform: SparkFun RedBoard Qwiic	
+  Hardware Platform: SparkFun RedBoard Qwiic
   SparkFun Human Presence and Motion Sensor - STHS34PF80 (Qwiic) Version: 1.0
   SparkFun Qwiic Mini Human Presence and Motion Sensor - STHS34PF80 Version: 1.0
-
-  Do you like this library? Help support SparkFun. Buy a board!
-
-    SparkFun Human Presence and Motion Sensor - STHS34PF80 (Qwiic)
-    https://www.sparkfun.com/products/22494
-    
-    SparkFun Qwiic Mini Human Presence and Motion Sensor - STHS34PF80
-    https://www.sparkfun.com/products/23253
 
   Hardware Connections:
   Use a Qwiic cable to connect from the RedBoard Qwiic to the STHS34PF80 breakout (QWIIC).
