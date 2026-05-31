@@ -1,13 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 3.1
+  Version: 3.2
   Last Modified: 2026-05-31
 
   Changelog:
-    v3.1 (2026-05-31) - Auto-scale MAX_SIGNAL to session peak abs(raw) so
-                        close-range values never exceed the log denominator
-                        and get clamped to 0 bars.
+    v3.2 (2026-05-31) - Remove autoscaling. Fixed MAX_SIGNAL=10000 based on
+                        real calibration: 1ft≈6000, 3ft≈2100.
+    v3.1 (2026-05-31) - Auto-scale to session peak — removed in v3.2.
     v3.0 (2026-05-31) - Use abs(emaVal) so negative raw values (far range)
                         are no longer silently clamped to a full bar. Both
                         signs now contribute to the log-scale bar correctly.
@@ -116,11 +116,14 @@ STHS34PF80_I2C mySensor;
 // Total bar chars. Leaves ~20 for "  raw:XXXXX" on a 120-col line.
 #define MAX_BARS     100
 
-int16_t presenceVal      = 0;
-float   emaVal           = 0.0f;
-bool    emaReady         = false;
-float   sessionMaxSignal = 1.0f;  // auto-scales to strongest abs(raw) seen
-int     sessionMaxBars   = 0;
+// abs(raw) at closest expected range = 0 bars.
+// Calibrated: 1ft≈6000, 3ft≈2100. 10000 gives headroom for <1ft.
+#define MAX_SIGNAL   10000
+
+int16_t presenceVal  = 0;
+float   emaVal       = 0.0f;
+bool    emaReady     = false;
+int     sessionMaxBars = 0;
 unsigned long lastPrintMs = 0;
 
 // Scan I2C bus and print all found device addresses
@@ -209,11 +212,8 @@ void loop()
 
       float signal = abs(emaVal);
 
-      // Auto-scale to the strongest signal seen so close range never clamps to 0
-      if(signal > sessionMaxSignal) sessionMaxSignal = signal;
-
       // Log scale: strong signal (close) = few bars, weak signal (far) = many bars
-      float logRatio = log(max(1.0f, signal)) / log(max(2.0f, sessionMaxSignal));
+      float logRatio = log(max(1.0f, signal)) / log((float)MAX_SIGNAL);
       int cur = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
       if(cur > sessionMaxBars) sessionMaxBars = cur;
 
