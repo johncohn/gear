@@ -1,10 +1,14 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.2
+  Version: 1.3
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.3 (2026-05-31) - Target board is Adafruit QT Py RP2040. STEMMA QT
+                        connector uses Wire1 (not Wire), so switched all I2C
+                        calls to Wire1. Also kept while(!Serial) guard for
+                        native USB.
     v1.2 (2026-05-31) - Added while(!Serial) guard after Serial.begin() so
                         output isn't lost on native USB boards before the
                         serial connection is established.
@@ -64,12 +68,12 @@ unsigned long loopCount = 0;
 // Scan I2C bus and print all found device addresses
 void i2cScan()
 {
-    Serial.println("Scanning I2C bus...");
+    Serial.println("Scanning I2C bus (Wire1 / STEMMA QT)...");
     int devicesFound = 0;
     for (byte addr = 1; addr < 127; addr++)
     {
-        Wire.beginTransmission(addr);
-        byte error = Wire.endTransmission();
+        Wire1.beginTransmission(addr);
+        byte error = Wire1.endTransmission();
         if (error == 0)
         {
             Serial.print("  I2C device found at address 0x");
@@ -101,14 +105,14 @@ void setup()
     Serial.println("STHS34PF80 Example 1: Basic Readings");
     Serial.println("----------------------------------------");
 
-    Serial.println("[INIT] Starting I2C (Wire.begin)...");
-    Wire.begin();
-    Serial.println("[INIT] I2C started.");
+    Serial.println("[INIT] Starting I2C on Wire1 (STEMMA QT connector)...");
+    Wire1.begin();
+    Serial.println("[INIT] Wire1 started.");
 
     i2cScan();
 
-    Serial.println("[INIT] Attempting mySensor.begin()...");
-    if(mySensor.begin() == false)
+    Serial.println("[INIT] Attempting mySensor.begin(Wire1)...");
+    if(mySensor.begin(Wire1) == false)
     {
       Serial.println("[ERROR] mySensor.begin() failed!");
       Serial.println("[ERROR] Check: is sensor powered? Is SDA/SCL connected?");
