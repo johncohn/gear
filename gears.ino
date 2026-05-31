@@ -1,10 +1,14 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.6
+  Version: 1.7
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.7 (2026-05-31) - Replace rolling average with EMA (alpha=0.15) for
+                        smooth continuous tracking. Print only when smoothed
+                        value shifts >25mm. Removed pres_flag gate so reading
+                        is continuous regardless of internal threshold.
     v1.6 (2026-05-31) - Convert presence to mm via inverse scale factor
                         (PRESENCE_SCALE_MM / presenceVal). Rolling 8-sample
                         average at 30Hz (~267ms smoothing). Print only when
@@ -68,21 +72,22 @@
 
 STHS34PF80_I2C mySensor;
 
-// Calibration: distance_mm ≈ PRESENCE_SCALE / presenceVal (inverse relationship).
+// Calibration: distance_mm ≈ PRESENCE_SCALE_MM / presenceVal.
 // Hold an object at a known distance and adjust until readings match.
-#define PRESENCE_SCALE_MM  50000.0f
+#define PRESENCE_SCALE_MM   50000.0f
 
-// Rolling average window (samples at 30Hz, so 8 = ~267ms of smoothing)
-#define AVG_WINDOW  8
+// EMA smoothing factor: 0.0 = frozen, 1.0 = raw/unsmoothed.
+// At 30Hz, 0.15 gives ~200ms of smoothing — real movement tracks cleanly,
+// high-frequency noise cancels before it crosses the print threshold.
+#define EMA_ALPHA           0.15f
 
-// Only print when the averaged distance shifts by more than this
-#define DEADZONE_MM  50.0f
+// Print only when the smoothed distance shifts by more than this.
+#define PRINT_THRESHOLD_MM  25.0f
 
-int16_t presenceVal = 0;
-float   avgBuffer[AVG_WINDOW] = {0};
-int     avgIndex  = 0;
-int     avgCount  = 0;
-float   lastPrintedAvg = 0.0f;
+int16_t presenceVal   = 0;
+float   ema           = 0.0f;
+bool    emaReady      = false;
+float   lastPrintedMm = 0.0f;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -156,32 +161,22 @@ void loop()
 
   if(dataReady.drdy == 1)
   {
-    sths34pf80_tmos_func_status_t status;
-    mySensor.getStatus(&status);
+    mySensor.getPresenceValue(&presenceVal);
 
-    if(status.pres_flag == 1)
+    if(presenceVal > 0)
     {
-      mySensor.getPresenceValue(&presenceVal);
+      float distMm = PRESENCE_SCALE_MM / (float)presenceVal;
 
-      if(presenceVal > 0)
+      // Seed the EMA on first valid reading so it doesn't start from 0
+      if(!emaReady) { ema = distMm; emaReady = true; }
+      else          { ema = EMA_ALPHA * distMm + (1.0f - EMA_ALPHA) * ema; }
+
+      if(fabs(ema - lastPrintedMm) > PRINT_THRESHOLD_MM)
       {
-        float distMm = PRESENCE_SCALE_MM / (float)presenceVal;
-
-        avgBuffer[avgIndex] = distMm;
-        avgIndex = (avgIndex + 1) % AVG_WINDOW;
-        if(avgCount < AVG_WINDOW) avgCount++;
-
-        float sum = 0;
-        for(int i = 0; i < avgCount; i++) sum += avgBuffer[i];
-        float avg = sum / (float)avgCount;
-
-        if(fabs(avg - lastPrintedAvg) > DEADZONE_MM)
-        {
-          Serial.print("Distance: ");
-          Serial.print(avg, 1);
-          Serial.println(" mm");
-          lastPrintedAvg = avg;
-        }
+        Serial.print("Distance: ");
+        Serial.print(ema, 0);
+        Serial.println(" mm");
+        lastPrintedMm = ema;
       }
     }
   }
