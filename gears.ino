@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.3
+  Version: 2.4
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.4 (2026-05-31) - Replace numeric output with ASCII bar graph.
+                        # = current distance (one per 25cm), - = gap to
+                        high water mark. Redraws at 2Hz. mm values appended.
     v2.3 (2026-05-31) - Remove hand/no-hand gating entirely. Always show
                         distance estimate. EMA runs continuously. Max recap
                         every 3 seconds.
@@ -87,27 +90,19 @@
 STHS34PF80_I2C mySensor;
 
 // Calibration: distance_mm ≈ PRESENCE_SCALE_MM / presenceVal.
-// Hold an object at a known distance and adjust until readings match.
-#define PRESENCE_SCALE_MM   50000.0f
+#define PRESENCE_SCALE_MM  50000.0f
 
-// presenceVal must exceed this to count as "hand present". Raise if
-// background noise triggers false detections; lower if hand isn't seen.
-#define DETECT_THRESHOLD    5
+// EMA on raw presenceVal (linear space). 0.25 at 30Hz ≈ 100ms smoothing.
+#define EMA_ALPHA          0.25f
 
-// EMA applied to raw presenceVal (linear space) before mm conversion.
-// 0.0 = frozen, 1.0 = raw. 0.25 at 30Hz ≈ 100ms smoothing.
-#define EMA_ALPHA           0.25f
+// One # or - per BAR_STEP_MM. 250mm = one segment per 25cm.
+#define BAR_STEP_MM        250
 
-// Print when smoothed distance changes more than this.
-#define PRINT_THRESHOLD_MM  1.0f
-
-int16_t presenceVal   = 0;
-float   emaPresence   = 0.0f;
-bool    handPresent   = false;
-float         lastPrintedMm  = 0.0f;
-float         sessionMaxMm   = 0.0f;
-unsigned long lastPrintMs    = 0;
-unsigned long lastStatsMs    = 0;
+int16_t presenceVal  = 0;
+float   emaPresence  = 0.0f;
+bool    emaReady     = false;
+float   sessionMaxMm = 0.0f;
+unsigned long lastPrintMs = 0;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -183,42 +178,31 @@ void loop()
   {
     mySensor.getPresenceValue(&presenceVal);
 
-    // Always update EMA — seed on first run
-    if(!handPresent)
-    {
-      emaPresence = (float)presenceVal;
-      handPresent = true;
-    }
-    else
-    {
-      emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence;
-    }
-
-    unsigned long now = millis();
+    if(!emaReady) { emaPresence = (float)presenceVal; emaReady = true; }
+    else          { emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence; }
 
     if(emaPresence > 0)
     {
       float distMm = PRESENCE_SCALE_MM / emaPresence;
       if(distMm > sessionMaxMm) sessionMaxMm = distMm;
 
-      // Print on movement, capped at 5Hz
-      if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM && now - lastPrintMs >= 200)
+      // Redraw bar at 2Hz — fast enough to feel live, slow enough to read
+      if(millis() - lastPrintMs >= 500)
       {
-        Serial.print(distMm, 0);
-        Serial.print(" mm   raw=");
-        Serial.println(presenceVal);
-        lastPrintedMm = distMm;
-        lastPrintMs   = now;
-      }
-    }
+        lastPrintMs = millis();
 
-    // Max recap every 3 seconds
-    if(now - lastStatsMs >= 3000)
-    {
-      Serial.print(">>> MAX: ");
-      Serial.print(sessionMaxMm, 0);
-      Serial.println(" mm <<<");
-      lastStatsMs = now;
+        int cur = max(1, (int)(distMm    / BAR_STEP_MM));
+        int hi  = max(cur, (int)(sessionMaxMm / BAR_STEP_MM));
+
+        for(int i = 0; i < cur; i++) Serial.print('#');
+        for(int i = cur; i < hi;  i++) Serial.print('-');
+
+        Serial.print("  ");
+        Serial.print((int)distMm);
+        Serial.print("mm  max:");
+        Serial.print((int)sessionMaxMm);
+        Serial.println("mm");
+      }
     }
   }
 }
