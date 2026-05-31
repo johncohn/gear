@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 3.0
+  Version: 3.1
   Last Modified: 2026-05-31
 
   Changelog:
+    v3.1 (2026-05-31) - Auto-scale MAX_SIGNAL to session peak abs(raw) so
+                        close-range values never exceed the log denominator
+                        and get clamped to 0 bars.
     v3.0 (2026-05-31) - Use abs(emaVal) so negative raw values (far range)
                         are no longer silently clamped to a full bar. Both
                         signs now contribute to the log-scale bar correctly.
@@ -110,17 +113,14 @@ STHS34PF80_I2C mySensor;
 // EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
 #define EMA_ALPHA    0.25f
 
-// presenceVal at closest range (= 0 bars). Raise if bar never empties
-// when you're right on top of the sensor.
-#define MAX_SIGNAL   500
-
 // Total bar chars. Leaves ~20 for "  raw:XXXXX" on a 120-col line.
 #define MAX_BARS     100
 
-int16_t presenceVal    = 0;
-float   emaVal         = 0.0f;
-bool    emaReady       = false;
-int     sessionMaxBars = 0;
+int16_t presenceVal      = 0;
+float   emaVal           = 0.0f;
+bool    emaReady         = false;
+float   sessionMaxSignal = 1.0f;  // auto-scales to strongest abs(raw) seen
+int     sessionMaxBars   = 0;
 unsigned long lastPrintMs = 0;
 
 // Scan I2C bus and print all found device addresses
@@ -207,10 +207,13 @@ void loop()
     {
       lastPrintMs = millis();
 
-      // Use abs so negative values (far range) are treated same as positives.
-      // Log scale: high abs = close = few bars. Low abs = far = many bars.
-      float signal   = abs(emaVal);
-      float logRatio = log(max(1.0f, signal)) / log((float)MAX_SIGNAL);
+      float signal = abs(emaVal);
+
+      // Auto-scale to the strongest signal seen so close range never clamps to 0
+      if(signal > sessionMaxSignal) sessionMaxSignal = signal;
+
+      // Log scale: strong signal (close) = few bars, weak signal (far) = many bars
+      float logRatio = log(max(1.0f, signal)) / log(max(2.0f, sessionMaxSignal));
       int cur = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
       if(cur > sessionMaxBars) sessionMaxBars = cur;
 
