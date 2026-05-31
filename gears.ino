@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.8
+  Version: 2.0
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.0 (2026-05-31) - Lower DETECT_THRESHOLD to 5. When below threshold,
+                        print raw presenceVal once/sec for range calibration.
+                        Print raw alongside distance when tracking.
     v1.8 (2026-05-31) - Apply EMA to raw presenceVal (linear space) before
                         converting to mm, eliminating noise amplification
                         through the reciprocal at large distances. Added
@@ -83,7 +86,7 @@ STHS34PF80_I2C mySensor;
 
 // presenceVal must exceed this to count as "hand present". Raise if
 // background noise triggers false detections; lower if hand isn't seen.
-#define DETECT_THRESHOLD    150
+#define DETECT_THRESHOLD    5
 
 // EMA applied to raw presenceVal (linear space) before mm conversion.
 // 0.0 = frozen, 1.0 = raw. 0.25 at 30Hz ≈ 100ms smoothing.
@@ -95,7 +98,8 @@ STHS34PF80_I2C mySensor;
 int16_t presenceVal   = 0;
 float   emaPresence   = 0.0f;
 bool    handPresent   = false;
-float   lastPrintedMm = 0.0f;
+float         lastPrintedMm  = 0.0f;
+unsigned long lastRawPrint   = 0;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -193,15 +197,27 @@ void loop()
       {
         Serial.print("Distance: ");
         Serial.print(distMm, 0);
-        Serial.println(" mm");
+        Serial.print(" mm  (raw=");
+        Serial.print(presenceVal);
+        Serial.println(")");
         lastPrintedMm = distMm;
       }
     }
-    else if(handPresent)
+    else
     {
-      // Hand left — reset so next arrival seeds cleanly
-      handPresent = false;
-      Serial.println("-- no hand --");
+      if(handPresent)
+      {
+        handPresent = false;
+        Serial.println("-- lost --");
+      }
+      // Print raw value ~once/sec so you can see what the sensor reads
+      // at any distance — use this to calibrate DETECT_THRESHOLD
+      if(millis() - lastRawPrint >= 1000)
+      {
+        lastRawPrint = millis();
+        Serial.print("raw=");
+        Serial.println(presenceVal);
+      }
     }
   }
 }
