@@ -1,10 +1,15 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.7
+  Version: 1.8
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.8 (2026-05-31) - Apply EMA to raw presenceVal (linear space) before
+                        converting to mm, eliminating noise amplification
+                        through the reciprocal at large distances. Added
+                        DETECT_THRESHOLD for hand-present gating; resets
+                        cleanly when hand leaves. 1mm print threshold.
     v1.7 (2026-05-31) - Replace rolling average with EMA (alpha=0.15) for
                         smooth continuous tracking. Print only when smoothed
                         value shifts >25mm. Removed pres_flag gate so reading
@@ -76,17 +81,20 @@ STHS34PF80_I2C mySensor;
 // Hold an object at a known distance and adjust until readings match.
 #define PRESENCE_SCALE_MM   50000.0f
 
-// EMA smoothing factor: 0.0 = frozen, 1.0 = raw/unsmoothed.
-// At 30Hz, 0.15 gives ~200ms of smoothing — real movement tracks cleanly,
-// high-frequency noise cancels before it crosses the print threshold.
-#define EMA_ALPHA           0.15f
+// presenceVal must exceed this to count as "hand present". Raise if
+// background noise triggers false detections; lower if hand isn't seen.
+#define DETECT_THRESHOLD    150
 
-// Print only when the smoothed distance shifts by more than this.
-#define PRINT_THRESHOLD_MM  25.0f
+// EMA applied to raw presenceVal (linear space) before mm conversion.
+// 0.0 = frozen, 1.0 = raw. 0.25 at 30Hz ≈ 100ms smoothing.
+#define EMA_ALPHA           0.25f
+
+// Print when smoothed distance changes more than this.
+#define PRINT_THRESHOLD_MM  1.0f
 
 int16_t presenceVal   = 0;
-float   ema           = 0.0f;
-bool    emaReady      = false;
+float   emaPresence   = 0.0f;
+bool    handPresent   = false;
 float   lastPrintedMm = 0.0f;
 
 // Scan I2C bus and print all found device addresses
@@ -163,21 +171,37 @@ void loop()
   {
     mySensor.getPresenceValue(&presenceVal);
 
-    if(presenceVal > 0)
+    if(presenceVal > DETECT_THRESHOLD)
     {
-      float distMm = PRESENCE_SCALE_MM / (float)presenceVal;
+      if(!handPresent)
+      {
+        // First frame of hand detection — seed EMA so there's no startup jump
+        emaPresence   = (float)presenceVal;
+        lastPrintedMm = PRESENCE_SCALE_MM / emaPresence;
+        handPresent   = true;
+      }
+      else
+      {
+        // EMA runs in raw presenceVal space (linear) to avoid amplifying
+        // noise through the reciprocal conversion at large distances
+        emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence;
+      }
 
-      // Seed the EMA on first valid reading so it doesn't start from 0
-      if(!emaReady) { ema = distMm; emaReady = true; }
-      else          { ema = EMA_ALPHA * distMm + (1.0f - EMA_ALPHA) * ema; }
+      float distMm = PRESENCE_SCALE_MM / emaPresence;
 
-      if(fabs(ema - lastPrintedMm) > PRINT_THRESHOLD_MM)
+      if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM)
       {
         Serial.print("Distance: ");
-        Serial.print(ema, 0);
+        Serial.print(distMm, 0);
         Serial.println(" mm");
-        lastPrintedMm = ema;
+        lastPrintedMm = distMm;
       }
+    }
+    else if(handPresent)
+    {
+      // Hand left — reset so next arrival seeds cleanly
+      handPresent = false;
+      Serial.println("-- no hand --");
     }
   }
 }
