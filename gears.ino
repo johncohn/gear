@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 1.4
+  Version: 1.5
   Last Modified: 2026-05-31
 
   Changelog:
+    v1.5 (2026-05-31) - Set ODR to max 30Hz for fastest motion tracking.
+                        Loop now only prints presence when value changes;
+                        removed heartbeat and per-frame status spam.
     v1.4 (2026-05-31) - Fix begin() call: library signature is
                         begin(uint8_t devAddr, TwoWire&), so must pass
                         STHS34PF80_I2C_ADDRESS before Wire1.
@@ -62,11 +65,9 @@ STHS34PF80_I2C mySensor;
 
 // Values to fill with presence and motion data
 int16_t presenceVal = 0;
+int16_t lastPresenceVal = 0;
 int16_t motionVal = 0;
 float temperatureVal = 0;
-
-unsigned long lastHeartbeat = 0;
-unsigned long loopCount = 0;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -127,60 +128,39 @@ void setup()
     Serial.println("[INIT] Sensor connected successfully!");
     Serial.println("[INIT] Waiting 1 second for sensor to stabilize...");
     delay(1000);
+    mySensor.setTmosODR(STHS34PF80_TMOS_ODR_AT_30Hz);
+    Serial.println("[INIT] ODR set to 30Hz (max).");
     Serial.println("[INIT] Setup complete. Entering loop.");
     Serial.println("----------------------------------------");
 }
 
 void loop()
 {
-  loopCount++;
-
-  // Print a heartbeat every 5 seconds so we know the loop is running
-  if (millis() - lastHeartbeat >= 5000)
-  {
-    lastHeartbeat = millis();
-    Serial.print("[HEARTBEAT] Loop running, iteration=");
-    Serial.print(loopCount);
-    Serial.print(", uptime=");
-    Serial.print(millis() / 1000);
-    Serial.println("s");
-  }
-
   sths34pf80_tmos_drdy_status_t dataReady;
   mySensor.getDataReady(&dataReady);
 
   if(dataReady.drdy == 1)
   {
-    Serial.println("[DATA] New data ready from sensor.");
     sths34pf80_tmos_func_status_t status;
     mySensor.getStatus(&status);
-
-    Serial.print("[STATUS] pres_flag=");
-    Serial.print(status.pres_flag);
-    Serial.print("  mot_flag=");
-    Serial.print(status.mot_flag);
-    Serial.print("  tamb_shock_flag=");
-    Serial.println(status.tamb_shock_flag);
 
     if(status.pres_flag == 1)
     {
       mySensor.getPresenceValue(&presenceVal);
-      Serial.print("[PRESENCE] ");
-      Serial.print(presenceVal);
-      Serial.println(" cm^-1");
+      if(presenceVal != lastPresenceVal)
+      {
+        Serial.print("Presence: ");
+        Serial.print(presenceVal);
+        Serial.print(" cm^-1  (delta: ");
+        Serial.print(presenceVal - lastPresenceVal);
+        Serial.println(")");
+        lastPresenceVal = presenceVal;
+      }
     }
 
     if(status.mot_flag == 1)
     {
-      Serial.println("[MOTION] Motion Detected!");
-    }
-
-    if(status.tamb_shock_flag == 1)
-    {
-      mySensor.getTemperatureData(&temperatureVal);
-      Serial.print("[TEMP] ");
-      Serial.print(temperatureVal);
-      Serial.println(" °C");
+      Serial.println("Motion!");
     }
   }
 }
