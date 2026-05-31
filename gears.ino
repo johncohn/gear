@@ -1,10 +1,14 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.5
+  Version: 2.6
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.6 (2026-05-31) - Drop mm conversion entirely. Bar shows raw signal
+                        strength (# per 25 raw units). More # = closer/stronger.
+                        | marks session max signal. Goal: see if sensor detects
+                        at 3m.
     v2.5 (2026-05-31) - Cap distMm at MAX_RANGE_MM (3m) so bad calibration
                         can't make a 40-segment bar. Add | at high water mark.
                         Restore raw presenceVal to help calibrate SCALE.
@@ -92,23 +96,16 @@
 
 STHS34PF80_I2C mySensor;
 
-// Calibration: distance_mm ≈ PRESENCE_SCALE_MM / presenceVal.
-// We don't have real calibration yet — raw value is printed so you can tune this.
-#define PRESENCE_SCALE_MM  50000.0f
+// EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
+#define EMA_ALPHA   0.25f
 
-// Hard cap on displayed distance. Prevents uncalibrated values blowing up the bar.
-#define MAX_RANGE_MM       3000
+// Raw presenceVal units per bar segment. Lower = more sensitive bar.
+#define BAR_STEP    25
 
-// EMA on raw presenceVal (linear space). 0.25 at 30Hz ≈ 100ms smoothing.
-#define EMA_ALPHA          0.25f
-
-// One bar segment per BAR_STEP_MM. 250 = one segment per 25cm, max 12 segments at 3m.
-#define BAR_STEP_MM        250
-
-int16_t presenceVal  = 0;
-float   emaPresence  = 0.0f;
-bool    emaReady     = false;
-float   sessionMaxMm = 0.0f;
+int16_t presenceVal    = 0;
+float   emaVal         = 0.0f;
+bool    emaReady       = false;
+int     sessionMaxBars = 0;
 unsigned long lastPrintMs = 0;
 
 // Scan I2C bus and print all found device addresses
@@ -188,31 +185,23 @@ void loop()
     if(!emaReady) { emaPresence = (float)presenceVal; emaReady = true; }
     else          { emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence; }
 
-    if(emaPresence > 0)
+    if(!emaReady) { emaVal = (float)presenceVal; emaReady = true; }
+    else          { emaVal = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaVal; }
+
+    if(millis() - lastPrintMs >= 500)
     {
-      // Cap to MAX_RANGE_MM so uncalibrated scale can't blow up the bar
-      float distMm = min(PRESENCE_SCALE_MM / emaPresence, (float)MAX_RANGE_MM);
-      if(distMm > sessionMaxMm) sessionMaxMm = distMm;
+      lastPrintMs = millis();
 
-      if(millis() - lastPrintMs >= 500)
-      {
-        lastPrintMs = millis();
+      int cur = max(0, (int)(emaVal / BAR_STEP));
+      if(cur > sessionMaxBars) sessionMaxBars = cur;
 
-        int cur = max(1, (int)(distMm      / BAR_STEP_MM));
-        int hi  = max(cur, (int)(sessionMaxMm / BAR_STEP_MM));
+      // # = current signal strength, - = gap to session max, | = session max
+      for(int i = 0; i < cur;           i++) Serial.print('#');
+      for(int i = cur; i < sessionMaxBars; i++) Serial.print('-');
+      if(sessionMaxBars > cur) Serial.print('|');
 
-        // # = current distance, - = gap to high water mark, | = high water mark
-        for(int i = 0; i < cur; i++)   Serial.print('#');
-        for(int i = cur; i < hi; i++)  Serial.print('-');
-        if(hi > cur) Serial.print('|');
-
-        Serial.print("  ");
-        Serial.print((int)distMm);
-        Serial.print("mm  max:");
-        Serial.print((int)sessionMaxMm);
-        Serial.print("mm  raw:");
-        Serial.println(presenceVal);
-      }
+      Serial.print("  raw:");
+      Serial.println(presenceVal);
     }
   }
 }
