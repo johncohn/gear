@@ -1,10 +1,12 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.6
+  Version: 2.7
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.7 (2026-05-31) - Invert bar: far = more #, close = fewer #. Scale
+                        to 60 chars so 3m fits on 80-col line with raw value.
     v2.6 (2026-05-31) - Drop mm conversion entirely. Bar shows raw signal
                         strength (# per 25 raw units). More # = closer/stronger.
                         | marks session max signal. Goal: see if sensor detects
@@ -97,10 +99,14 @@
 STHS34PF80_I2C mySensor;
 
 // EMA smoothing on raw signal. 0.25 at 30Hz ≈ 100ms.
-#define EMA_ALPHA   0.25f
+#define EMA_ALPHA    0.25f
 
-// Raw presenceVal units per bar segment. Lower = more sensitive bar.
-#define BAR_STEP    25
+// presenceVal that represents "as close as it gets" (0 bars).
+// Raise if bar is always full; lower if bar never empties up close.
+#define CLOSE_SIGNAL 300
+
+// Total bar width. Leaves ~20 chars for "  raw:XXXXX" on an 80-col line.
+#define MAX_BARS     60
 
 int16_t presenceVal    = 0;
 float   emaVal         = 0.0f;
@@ -192,13 +198,14 @@ void loop()
     {
       lastPrintMs = millis();
 
-      int cur = max(0, (int)(emaVal / BAR_STEP));
+      // Invert: far away (low signal) = many #, close (high signal) = few #
+      int cur = MAX_BARS - constrain((int)(emaVal * MAX_BARS / CLOSE_SIGNAL), 0, MAX_BARS);
       if(cur > sessionMaxBars) sessionMaxBars = cur;
 
-      // # = current signal strength, - = gap to session max, | = session max
-      for(int i = 0; i < cur;           i++) Serial.print('#');
+      // # = current distance, - = gap to furthest point reached, | = high water mark
+      for(int i = 0; i < cur;              i++) Serial.print('#');
       for(int i = cur; i < sessionMaxBars; i++) Serial.print('-');
-      if(sessionMaxBars > cur) Serial.print('|');
+      if(sessionMaxBars > cur)                  Serial.print('|');
 
       Serial.print("  raw:");
       Serial.println(presenceVal);
