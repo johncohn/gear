@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.9
+  Version: 3.0
   Last Modified: 2026-05-31
 
   Changelog:
+    v3.0 (2026-05-31) - Use abs(emaVal) so negative raw values (far range)
+                        are no longer silently clamped to a full bar. Both
+                        signs now contribute to the log-scale bar correctly.
     v2.9 (2026-05-31) - Switch to logarithmic bar scale so close (raw=500)
                         and far (raw=5) both get even visual spread. Each
                         doubling of distance moves the bar the same amount.
@@ -204,9 +207,10 @@ void loop()
     {
       lastPrintMs = millis();
 
-      // Log scale: each doubling of distance moves the bar the same amount.
-      // log(MAX_SIGNAL) maps to 0 bars; log(1) maps to MAX_BARS.
-      float logRatio = log(max(1.0f, emaVal)) / log((float)MAX_SIGNAL);
+      // Use abs so negative values (far range) are treated same as positives.
+      // Log scale: high abs = close = few bars. Low abs = far = many bars.
+      float signal   = abs(emaVal);
+      float logRatio = log(max(1.0f, signal)) / log((float)MAX_SIGNAL);
       int cur = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
       if(cur > sessionMaxBars) sessionMaxBars = cur;
 
