@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.0
+  Version: 2.1
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.1 (2026-05-31) - Use \r to overwrite single line during tracking so
+                        output never scrolls. Show running session max next
+                        to current distance. Print session max on lost.
     v2.0 (2026-05-31) - Lower DETECT_THRESHOLD to 5. When below threshold,
                         print raw presenceVal once/sec for range calibration.
                         Print raw alongside distance when tracking.
@@ -99,6 +102,7 @@ int16_t presenceVal   = 0;
 float   emaPresence   = 0.0f;
 bool    handPresent   = false;
 float         lastPrintedMm  = 0.0f;
+float         sessionMaxMm   = 0.0f;
 unsigned long lastRawPrint   = 0;
 
 // Scan I2C bus and print all found device addresses
@@ -193,13 +197,18 @@ void loop()
 
       float distMm = PRESENCE_SCALE_MM / emaPresence;
 
+      if(distMm > sessionMaxMm) sessionMaxMm = distMm;
+
       if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM)
       {
-        Serial.print("Distance: ");
+        // \r overwrites the current line — distance never scrolls off screen
+        Serial.print("\r  Now: ");
         Serial.print(distMm, 0);
-        Serial.print(" mm  (raw=");
+        Serial.print(" mm   Max: ");
+        Serial.print(sessionMaxMm, 0);
+        Serial.print(" mm   raw=");
         Serial.print(presenceVal);
-        Serial.println(")");
+        Serial.print("   ");   // trailing spaces wipe leftover chars from longer previous line
         lastPrintedMm = distMm;
       }
     }
@@ -208,15 +217,20 @@ void loop()
       if(handPresent)
       {
         handPresent = false;
-        Serial.println("-- lost --");
+        // Newline first so the lost message appears below the tracking line
+        Serial.println();
+        Serial.print("-- lost --   session max: ");
+        Serial.print(sessionMaxMm, 0);
+        Serial.println(" mm");
       }
-      // Print raw value ~once/sec so you can see what the sensor reads
-      // at any distance — use this to calibrate DETECT_THRESHOLD
+      // Show raw value once/sec while no hand — walk the room and note
+      // what raw= reads at each distance to calibrate DETECT_THRESHOLD
       if(millis() - lastRawPrint >= 1000)
       {
         lastRawPrint = millis();
-        Serial.print("raw=");
-        Serial.println(presenceVal);
+        Serial.print("\rno hand   raw=");
+        Serial.print(presenceVal);
+        Serial.print("   ");
       }
     }
   }
