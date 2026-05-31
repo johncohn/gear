@@ -182,8 +182,8 @@ void loop()
   {
     mySensor.getPresenceValue(&presenceVal);
 
-    if(!emaReady) { emaPresence = (float)presenceVal; emaReady = true; }
-    else          { emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence; }
+    if(!emaReady) { emaVal = (float)presenceVal; emaReady = true; }
+    else          { emaVal = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaVal; }
 
     if(!emaReady) { emaVal = (float)presenceVal; emaReady = true; }
     else          { emaVal = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaVal; }
