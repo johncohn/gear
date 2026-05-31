@@ -1,10 +1,13 @@
 /******************************************************************************
   gears.ino
 
-  Version: 2.2
+  Version: 2.3
   Last Modified: 2026-05-31
 
   Changelog:
+    v2.3 (2026-05-31) - Remove hand/no-hand gating entirely. Always show
+                        distance estimate. EMA runs continuously. Max recap
+                        every 3 seconds.
     v2.2 (2026-05-31) - Replace \r approach (unreliable in Serial Monitor)
                         with throttled println: max 5Hz updates while moving,
                         session max recap every 3 seconds, clean lost line.
@@ -105,7 +108,6 @@ float         lastPrintedMm  = 0.0f;
 float         sessionMaxMm   = 0.0f;
 unsigned long lastPrintMs    = 0;
 unsigned long lastStatsMs    = 0;
-unsigned long lastRawPrint   = 0;
 
 // Scan I2C bus and print all found device addresses
 void i2cScan()
@@ -181,65 +183,42 @@ void loop()
   {
     mySensor.getPresenceValue(&presenceVal);
 
-    if(presenceVal > DETECT_THRESHOLD)
+    // Always update EMA — seed on first run
+    if(!handPresent)
     {
-      if(!handPresent)
-      {
-        // First frame of hand detection — seed EMA so there's no startup jump
-        emaPresence   = (float)presenceVal;
-        lastPrintedMm = PRESENCE_SCALE_MM / emaPresence;
-        handPresent   = true;
-      }
-      else
-      {
-        // EMA runs in raw presenceVal space (linear) to avoid amplifying
-        // noise through the reciprocal conversion at large distances
-        emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence;
-      }
+      emaPresence = (float)presenceVal;
+      handPresent = true;
+    }
+    else
+    {
+      emaPresence = EMA_ALPHA * (float)presenceVal + (1.0f - EMA_ALPHA) * emaPresence;
+    }
 
+    unsigned long now = millis();
+
+    if(emaPresence > 0)
+    {
       float distMm = PRESENCE_SCALE_MM / emaPresence;
-
       if(distMm > sessionMaxMm) sessionMaxMm = distMm;
 
-      unsigned long now = millis();
-
-      // Print on movement, but no faster than 5Hz to avoid flooding
+      // Print on movement, capped at 5Hz
       if(fabs(distMm - lastPrintedMm) > PRINT_THRESHOLD_MM && now - lastPrintMs >= 200)
       {
-        Serial.print("Now: ");
         Serial.print(distMm, 0);
         Serial.print(" mm   raw=");
         Serial.println(presenceVal);
         lastPrintedMm = distMm;
         lastPrintMs   = now;
       }
-
-      // Stats recap every 3 seconds so max stays visible even while scrolling
-      if(now - lastStatsMs >= 3000)
-      {
-        Serial.print(">>> MAX SO FAR: ");
-        Serial.print(sessionMaxMm, 0);
-        Serial.println(" mm <<<");
-        lastStatsMs = now;
-      }
     }
-    else
+
+    // Max recap every 3 seconds
+    if(now - lastStatsMs >= 3000)
     {
-      if(handPresent)
-      {
-        handPresent = false;
-        Serial.print("-- lost --   session max: ");
-        Serial.print(sessionMaxMm, 0);
-        Serial.println(" mm");
-      }
-      // Show raw value once/sec while no hand — walk the room and note
-      // what raw= reads at each distance to calibrate DETECT_THRESHOLD
-      if(millis() - lastRawPrint >= 1000)
-      {
-        lastRawPrint = millis();
-        Serial.print("no hand   raw=");
-        Serial.println(presenceVal);
-      }
+      Serial.print(">>> MAX: ");
+      Serial.print(sessionMaxMm, 0);
+      Serial.println(" mm <<<");
+      lastStatsMs = now;
     }
   }
 }
