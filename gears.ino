@@ -4,31 +4,57 @@
   Version: 4.2
   Last Modified: 2026-05-31
 
+  Overview:
+    An interactive kinetic sculpture controller. An STHS34PF80 IR presence
+    sensor detects a person's distance (up to ~3m). That signal drives 16
+    continuous-rotation servos via a PCA9685 PWM driver — each servo has an
+    individually configured direction and speed ramp so the whole assembly
+    responds differently to the same distance reading. When nobody is present
+    all servos are stopped; they spin up as a person approaches, with
+    alternating directions and layered speed responses across the 16 channels.
+
+  Hardware:
+    Adafruit QT Py RP2040
+    STEMMA QT / Qwiic chain on Wire1 (I2C):
+      0x5A  SparkFun STHS34PF80 human presence & motion sensor
+      0x40  Adafruit PCA9685 16-channel 12-bit PWM servo driver
+    16x continuous-rotation servos on PCA9685 channels 0–15
+
+  Required Libraries (install via Arduino Library Manager):
+    SparkFun STHS34PF80 Arduino Library
+    Adafruit PWM Servo Driver Library
+
+  Terminal / Serial Monitor:
+    The live display uses ANSI escape codes to redraw in-place and will NOT
+    render correctly in the Arduino IDE Serial Monitor. Use instead:
+      macOS:   screen /dev/cu.usbmodem<PORT> 115200   (exit: Ctrl-A then K)
+      Windows: PuTTY or CoolTerm in VT100/ANSI mode at 115200 baud
+
+  Signal Calibration (STHS34PF80 raw presenceVal on this unit):
+    ~6000  at 1 ft
+    ~2100  at 3 ft
+    ~0     at ~2 m (signal crosses zero; negative values beyond this)
+    MAX_SIGNAL = 10000 gives headroom for sub-1ft distances
+
+  Servo Config Quick Reference (see ServoConfig table below):
+    changeover : emaVal where this servo is stopped. 0 = stopped when nobody
+                 detected, spins up as person approaches.
+    slope      : PWM counts per raw emaVal unit.
+                 Positive → CW when close.  Negative → CCW when close.
+                 Larger magnitude → faster / longer-range response.
+
   Changelog:
     v4.2 (2026-05-31) - Set all changeovers to 0: servos stopped when nobody
                         present, spin up as person approaches. Varied slope
                         magnitudes for layered activation at different ranges.
     v4.1 (2026-05-31) - ANSI terminal display: 16 centered servo bars + distance
-                        bar, redrawn in place at 2Hz. Requires ANSI terminal
-                        (screen/PuTTY/CoolTerm), not Arduino Serial Monitor.
-    v4.0 (2026-05-31) - Add PCA9685 16-channel PWM servo driver. Each channel
-                        configured via ServoConfig table (changeover + slope).
-                        All servos stop when presence signal drops below
-                        PRESENCE_CUTOFF. Fixed duplicate EMA update bug.
-    v3.3 (2026-05-31) - Lower EMA_ALPHA 0.25→0.1 for ~300ms smoothing to
-                        suppress occasional noise spikes at far range.
-    v3.2 (2026-05-31) - Remove autoscaling. Fixed MAX_SIGNAL=10000 based on
-                        real calibration: 1ft≈6000, 3ft≈2100.
-    v3.0 (2026-05-31) - Use abs(emaVal) so negative raw values (far range)
-                        contribute to the log-scale bar correctly.
-    v2.4 (2026-05-31) - Replace numeric output with ASCII bar graph.
-    v1.0 (2023-09-19) - Initial release (SparkFun example, basic readings).
-
-  Hardware:
-    Adafruit QT Py RP2040
-    STEMMA QT chain on Wire1:
-      0x5A  STHS34PF80 human presence sensor
-      0x40  PCA9685 16-channel PWM servo driver
+                        bar, redrawn in place at 2Hz.
+    v4.0 (2026-05-31) - Add PCA9685 16-channel PWM servo driver.
+    v3.3 (2026-05-31) - Lower EMA_ALPHA 0.25→0.1 (~300ms smoothing).
+    v3.2 (2026-05-31) - Fixed MAX_SIGNAL=10000 (calibrated: 1ft≈6000, 3ft≈2100).
+    v3.0 (2026-05-31) - Use abs(emaVal) so negative far-range values are used.
+    v2.4 (2026-05-31) - ASCII bar graph distance display.
+    v1.0 (2023-09-19) - Initial release.
 
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
