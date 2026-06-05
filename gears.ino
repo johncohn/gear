@@ -1,8 +1,8 @@
 /******************************************************************************
   gears.ino
 
-  Version: 4.3
-  Last Modified: 2026-05-31
+  Version: 5.0
+  Last Modified: 2026-06-05
 
   Overview:
     An interactive kinetic sculpture controller. An STHS34PF80 IR presence
@@ -44,6 +44,10 @@
                  Larger magnitude → faster / longer-range response.
 
   Changelog:
+    v5.0 (2026-06-05) - Auto-shutdown after 5s no presence; 3s soft-on ramp when
+                        waking; changeover points spread across detection range so
+                        each servo pair reverses at a different distance; status
+                        line in display: [OFF], [RAMP xx%], [ACTIVE], countdown.
     v4.3 (2026-05-31) - Sensor is now optional. If STHS34PF80 not found, runs
                         a 6-second CW/CCW sweep on all PCA9685 channels to
                         verify servo driver communication without the sensor.
@@ -82,9 +86,14 @@
 // Total bar chars for the serial display (fits on a 120-col line).
 #define MAX_BARS        100
 
-// abs(emaVal) below this = nobody home → stop all servos.
-// Raise to stop servos sooner (closer); lower to keep running at greater range.
-#define PRESENCE_CUTOFF 30
+// abs(emaVal) below this = nobody home.
+#define PRESENCE_CUTOFF  30
+
+// How long presence must be absent before servos shut down (ms).
+#define SHUTDOWN_DELAY_MS  5000
+
+// Soft-on ramp duration when waking from shutdown (ms).
+#define SOFTON_MS          3000
 
 // ---------------------------------------------------------------------------
 // SERVO SETTINGS  (apply to all channels)
@@ -116,26 +125,28 @@ struct ServoConfig { float changeover; float slope; };
 
 ServoConfig channels[NUM_CHANNELS] = {
   //  ch   changeover   slope
-  //  All changeovers = 0 so every servo starts stopped when nobody is
-  //  present and spins up as emaVal rises (person gets closer).
-  //  Alternating slope signs → alternating CW/CCW directions.
-  //  Larger slope magnitude → reaches full speed at greater distance.
-  /*  0 */ { 0,  0.015f },   // gentlest — full speed only when very close
-  /*  1 */ { 0, -0.015f },
-  /*  2 */ { 0,  0.025f },
-  /*  3 */ { 0, -0.025f },
-  /*  4 */ { 0,  0.035f },
-  /*  5 */ { 0, -0.035f },
-  /*  6 */ { 0,  0.050f },
-  /*  7 */ { 0, -0.050f },
-  /*  8 */ { 0,  0.070f },
-  /*  9 */ { 0, -0.070f },
-  /* 10 */ { 0,  0.090f },
-  /* 11 */ { 0, -0.090f },
-  /* 12 */ { 0,  0.120f },
-  /* 13 */ { 0, -0.120f },
-  /* 14 */ { 0,  0.150f },   // most aggressive — full speed at mid-range
-  /* 15 */ { 0, -0.150f },
+  //
+  //  changeover is spread across the detection range so each pair of servos
+  //  reverses direction at a different distance. Slopes are balanced so all
+  //  channels reach a similar max speed when someone is at ~1ft.
+  //  Soft-on ramp ensures nobody gets a sudden jump regardless of changeover.
+  //
+  /*  0 */ {  300,  0.020f },   // reverses when signal just clears cutoff
+  /*  1 */ {  300, -0.020f },
+  /*  2 */ {  700,  0.022f },
+  /*  3 */ {  700, -0.022f },
+  /*  4 */ { 1200,  0.025f },
+  /*  5 */ { 1200, -0.025f },
+  /*  6 */ { 1800,  0.030f },
+  /*  7 */ { 1800, -0.030f },
+  /*  8 */ { 2500,  0.038f },
+  /*  9 */ { 2500, -0.038f },
+  /* 10 */ { 3300,  0.050f },
+  /* 11 */ { 3300, -0.050f },
+  /* 12 */ { 4200,  0.070f },
+  /* 13 */ { 4200, -0.070f },
+  /* 14 */ { 5200,  0.100f },   // reverses only when person is very close (~1ft)
+  /* 15 */ { 5200, -0.100f },
 };
 
 // ---------------------------------------------------------------------------
@@ -150,8 +161,13 @@ float   emaVal            = 0.0f;
 bool    emaReady          = false;
 bool    sensorFound       = false;
 int     sessionMaxBars    = 0;
-int     servoPwm[NUM_CHANNELS];   // last computed PWM per channel, for display
-unsigned long lastPrintMs = 0;
+int     servoPwm[NUM_CHANNELS];
+
+bool          systemActive    = false;
+unsigned long lastPresenceMs  = 0;   // last time abs(emaVal) >= PRESENCE_CUTOFF
+unsigned long wakeTimeMs      = 0;   // when the most recent wake-up started
+
+unsigned long lastPrintMs     = 0;
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -188,18 +204,38 @@ void stopAllServos()
 
 void updateServos()
 {
-    bool present = (abs(emaVal) >= PRESENCE_CUTOFF);
+    unsigned long now     = millis();
+    bool          present = (abs(emaVal) >= PRESENCE_CUTOFF);
+
+    // Presence tracking → shutdown / wake logic
+    if (present) lastPresenceMs = now;
+
+    if (!systemActive && present)
+    {
+        systemActive = true;
+        wakeTimeMs   = now;
+    }
+    else if (systemActive && !present && (now - lastPresenceMs >= SHUTDOWN_DELAY_MS))
+    {
+        systemActive = false;
+    }
+
+    // Soft-on ramp: 0.0 → 1.0 over SOFTON_MS after wake
+    float speedScale = systemActive
+        ? constrain((float)(now - wakeTimeMs) / SOFTON_MS, 0.0f, 1.0f)
+        : 0.0f;
 
     for (int ch = 0; ch < NUM_CHANNELS; ch++)
     {
         int pwmVal;
-        if (!present)
+        if (speedScale == 0.0f)
         {
             pwmVal = SERVO_STOP;
         }
         else
         {
-            pwmVal = SERVO_STOP + (int)(channels[ch].slope * (emaVal - channels[ch].changeover));
+            float target = channels[ch].slope * (emaVal - channels[ch].changeover);
+            pwmVal = SERVO_STOP + (int)(speedScale * target);
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
         }
         pwm.setPWM(ch, 0, pwmVal);
@@ -262,8 +298,39 @@ void printDisplay()
         if (sessionMaxBars > cur)                  Serial.print('|');
         Serial.print("  raw:");
         Serial.print(presenceVal);
-        if (abs(emaVal) < PRESENCE_CUTOFF) Serial.print("  [no presence]");
         Serial.println();
+
+        Serial.println();
+        if (!systemActive)
+        {
+            Serial.println("  [OFF — no presence]");
+        }
+        else
+        {
+            unsigned long elapsed = millis() - wakeTimeMs;
+            if (elapsed < SOFTON_MS)
+            {
+                int pct = (int)(elapsed * 100 / SOFTON_MS);
+                Serial.print("  [RAMP ");
+                Serial.print(pct);
+                Serial.println("%]");
+            }
+            else
+            {
+                unsigned long idleMs = millis() - lastPresenceMs;
+                if (idleMs > 1000)
+                {
+                    unsigned long remaining = (SHUTDOWN_DELAY_MS - idleMs) / 1000 + 1;
+                    Serial.print("  [ACTIVE — shutting down in ");
+                    Serial.print(remaining);
+                    Serial.println("s]");
+                }
+                else
+                {
+                    Serial.println("  [ACTIVE]");
+                }
+            }
+        }
     }
     else
     {
@@ -280,7 +347,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { ; }
     Serial.println("----------------------------------------");
-    Serial.println("gears.ino v4.0");
+    Serial.println("gears.ino v5.0");
     Serial.println("----------------------------------------");
 
     Wire1.begin();
