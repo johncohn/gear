@@ -1,7 +1,7 @@
 /******************************************************************************
   gears.ino
 
-  Version: 5.0
+  Version: 5.2
   Last Modified: 2026-06-05
 
   Overview:
@@ -44,6 +44,17 @@
                  Larger magnitude → faster / longer-range response.
 
   Changelog:
+    v5.2 (2026-06-05) - Restore slope-intercept formula: slope*(emaVal-changeover)
+                        gives true direction reversal at each servo's changeover
+                        point. Changeovers spread 100-5200 so cascade of reversals
+                        sweeps through all 16 channels as person walks in from 3m.
+                        Immediate shutdown (no countdown) prevents idle spinning;
+                        EMA 300ms smoothing debounces dropouts.
+    v5.1 (2026-06-05) - All changeovers=0: speed proportional to signal so servos
+                        are always stopped at idle and ramp up immediately from
+                        any detectable distance. PRESENCE_CUTOFF 30→75 to reject
+                        thermal background noise. SHUTDOWN_DELAY 5s→3s, ramp 3s→1.5s.
+                        Alternating CW/CCW pairs; uniform slope=0.050 as baseline.
     v5.0 (2026-06-05) - Auto-shutdown after 5s no presence; 3s soft-on ramp when
                         waking; changeover points spread across detection range so
                         each servo pair reverses at a different distance; status
@@ -87,13 +98,10 @@
 #define MAX_BARS        100
 
 // abs(emaVal) below this = nobody home.
-#define PRESENCE_CUTOFF  30
-
-// How long presence must be absent before servos shut down (ms).
-#define SHUTDOWN_DELAY_MS  5000
+#define PRESENCE_CUTOFF  75
 
 // Soft-on ramp duration when waking from shutdown (ms).
-#define SOFTON_MS          3000
+#define SOFTON_MS          1500
 
 // ---------------------------------------------------------------------------
 // SERVO SETTINGS  (apply to all channels)
@@ -107,16 +115,15 @@
 // ---------------------------------------------------------------------------
 // PER-CHANNEL SERVO CONFIGURATION TABLE
 //
-//   changeover : emaVal at which this servo is stopped (crosses SERVO_STOP).
-//                Higher value = servo activates when person is closer.
-//                Lower value  = servo activates when person is farther away.
-//                Calibrated range: ~100 (very far) to ~6000 (1 foot away).
+//   changeover : emaVal at which this servo passes through SERVO_STOP (zero
+//                speed). Below changeover → one direction; above → reverse.
+//                Each pair reverses at a different distance as person approaches.
+//                Calibrated range: ~75 (first detection) to ~6000 (1 foot away).
 //
-//   slope      : PWM counts per unit of (emaVal - changeover).
-//                Positive → spins forward when person is CLOSER than changeover.
-//                Negative → spins forward when person is FARTHER than changeover.
-//                Larger magnitude → faster speed ramp.
-//                Typical range: ±0.03 to ±0.15
+//   slope      : PWM counts per emaVal unit, centered on changeover.
+//                Positive → CCW when far (emaVal<changeover), CW when close.
+//                Negative → CW when far, CCW when close.
+//                Sized so every channel reaches full speed at ~1 ft (emaVal≈6000).
 // ---------------------------------------------------------------------------
 
 #define NUM_CHANNELS 16
@@ -126,27 +133,29 @@ struct ServoConfig { float changeover; float slope; };
 ServoConfig channels[NUM_CHANNELS] = {
   //  ch   changeover   slope
   //
-  //  changeover is spread across the detection range so each pair of servos
-  //  reverses direction at a different distance. Slopes are balanced so all
-  //  channels reach a similar max speed when someone is at ~1ft.
-  //  Soft-on ramp ensures nobody gets a sudden jump regardless of changeover.
+  //  Changeovers spread 100→5200 so servos reverse direction in a cascade
+  //  as someone walks from detection range (~3m) down to 1 ft.
+  //  At far detection (emaVal≈100-300): most channels spinning in "far" direction.
+  //  At 3 ft (emaVal≈2100): about half have reversed.
+  //  At 1 ft (emaVal≈6000): all channels at full speed in "close" direction.
+  //  Slopes sized so each channel just reaches full speed at emaVal=6000.
   //
-  /*  0 */ {  300,  0.020f },   // reverses when signal just clears cutoff
-  /*  1 */ {  300, -0.020f },
-  /*  2 */ {  700,  0.022f },
-  /*  3 */ {  700, -0.022f },
-  /*  4 */ { 1200,  0.025f },
-  /*  5 */ { 1200, -0.025f },
-  /*  6 */ { 1800,  0.030f },
-  /*  7 */ { 1800, -0.030f },
-  /*  8 */ { 2500,  0.038f },
-  /*  9 */ { 2500, -0.038f },
-  /* 10 */ { 3300,  0.050f },
-  /* 11 */ { 3300, -0.050f },
-  /* 12 */ { 4200,  0.070f },
-  /* 13 */ { 4200, -0.070f },
-  /* 14 */ { 5200,  0.100f },   // reverses only when person is very close (~1ft)
-  /* 15 */ { 5200, -0.100f },
+  /*  0 */ {  100,  0.026f },   // reverses just above detection threshold
+  /*  1 */ {  100, -0.026f },
+  /*  2 */ {  500,  0.028f },
+  /*  3 */ {  500, -0.028f },
+  /*  4 */ { 1000,  0.031f },
+  /*  5 */ { 1000, -0.031f },
+  /*  6 */ { 1700,  0.036f },
+  /*  7 */ { 1700, -0.036f },
+  /*  8 */ { 2600,  0.045f },
+  /*  9 */ { 2600, -0.045f },
+  /* 10 */ { 3500,  0.061f },
+  /* 11 */ { 3500, -0.061f },
+  /* 12 */ { 4400,  0.096f },
+  /* 13 */ { 4400, -0.096f },
+  /* 14 */ { 5200,  0.191f },   // reverses only at ~1 ft
+  /* 15 */ { 5200, -0.191f },
 };
 
 // ---------------------------------------------------------------------------
@@ -164,7 +173,6 @@ int     sessionMaxBars    = 0;
 int     servoPwm[NUM_CHANNELS];
 
 bool          systemActive    = false;
-unsigned long lastPresenceMs  = 0;   // last time abs(emaVal) >= PRESENCE_CUTOFF
 unsigned long wakeTimeMs      = 0;   // when the most recent wake-up started
 
 unsigned long lastPrintMs     = 0;
@@ -207,15 +215,14 @@ void updateServos()
     unsigned long now     = millis();
     bool          present = (abs(emaVal) >= PRESENCE_CUTOFF);
 
-    // Presence tracking → shutdown / wake logic
-    if (present) lastPresenceMs = now;
-
+    // Immediate shutdown when presence is lost; soft-on ramp when waking.
+    // EMA smoothing (300ms) already debounces momentary dropouts.
     if (!systemActive && present)
     {
         systemActive = true;
         wakeTimeMs   = now;
     }
-    else if (systemActive && !present && (now - lastPresenceMs >= SHUTDOWN_DELAY_MS))
+    else if (systemActive && !present)
     {
         systemActive = false;
     }
@@ -234,8 +241,7 @@ void updateServos()
         }
         else
         {
-            float diff   = max(0.0f, abs(emaVal) - channels[ch].changeover);
-            float target = channels[ch].slope * diff;
+            float target = channels[ch].slope * (emaVal - channels[ch].changeover);
             pwmVal = SERVO_STOP + (int)(speedScale * target);
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
         }
@@ -318,18 +324,7 @@ void printDisplay()
             }
             else
             {
-                unsigned long idleMs = millis() - lastPresenceMs;
-                if (idleMs > 1000)
-                {
-                    unsigned long remaining = (SHUTDOWN_DELAY_MS - idleMs) / 1000 + 1;
-                    Serial.print("  [ACTIVE — shutting down in ");
-                    Serial.print(remaining);
-                    Serial.println("s]");
-                }
-                else
-                {
-                    Serial.println("  [ACTIVE]");
-                }
+                Serial.println("  [ACTIVE]");
             }
         }
     }
@@ -348,7 +343,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { ; }
     Serial.println("----------------------------------------");
-    Serial.println("gears.ino v5.0");
+    Serial.println("gears.ino v5.2");
     Serial.println("----------------------------------------");
 
     Wire1.begin();
