@@ -234,7 +234,8 @@ void updateServos()
         }
         else
         {
-            float target = channels[ch].slope * (emaVal - channels[ch].changeover);
+            float diff   = max(0.0f, abs(emaVal) - channels[ch].changeover);
+            float target = channels[ch].slope * diff;
             pwmVal = SERVO_STOP + (int)(speedScale * target);
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
         }
