@@ -367,7 +367,9 @@ void printDisplay()
 void setup()
 {
     Serial.begin(115200);
-    while (!Serial) { ; }
+    // Wait up to 3s for a USB serial host; continue anyway for battery/charger use.
+    unsigned long serialWait = millis();
+    while (!Serial && (millis() - serialWait < 3000)) { ; }
     Serial.println("----------------------------------------");
     Serial.println("gears.ino v5.4");
     Serial.println("----------------------------------------");
