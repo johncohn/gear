@@ -1,7 +1,7 @@
 /******************************************************************************
   gears.ino
 
-  Version: 4.2
+  Version: 4.3
   Last Modified: 2026-05-31
 
   Overview:
@@ -44,6 +44,9 @@
                  Larger magnitude → faster / longer-range response.
 
   Changelog:
+    v4.3 (2026-05-31) - Sensor is now optional. If STHS34PF80 not found, runs
+                        a 6-second CW/CCW sweep on all PCA9685 channels to
+                        verify servo driver communication without the sensor.
     v4.2 (2026-05-31) - Set all changeovers to 0: servos stopped when nobody
                         present, spin up as person approaches. Varied slope
                         magnitudes for layered activation at different ranges.
@@ -145,6 +148,7 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire1);
 int16_t presenceVal       = 0;
 float   emaVal            = 0.0f;
 bool    emaReady          = false;
+bool    sensorFound       = false;
 int     sessionMaxBars    = 0;
 int     servoPwm[NUM_CHANNELS];   // last computed PWM per channel, for display
 unsigned long lastPrintMs = 0;
@@ -250,14 +254,21 @@ void printDisplay()
     int   cur      = constrain((int)(MAX_BARS * (1.0f - logRatio)), 0, MAX_BARS);
     if (cur > sessionMaxBars) sessionMaxBars = cur;
 
-    Serial.print("dist  ");
-    for (int i = 0; i < cur;              i++) Serial.print('#');
-    for (int i = cur; i < sessionMaxBars; i++) Serial.print('-');
-    if (sessionMaxBars > cur)                  Serial.print('|');
-    Serial.print("  raw:");
-    Serial.print(presenceVal);
-    if (abs(emaVal) < PRESENCE_CUTOFF) Serial.print("  [no presence]");
-    Serial.println();
+    if (sensorFound)
+    {
+        Serial.print("dist  ");
+        for (int i = 0; i < cur;              i++) Serial.print('#');
+        for (int i = cur; i < sessionMaxBars; i++) Serial.print('-');
+        if (sessionMaxBars > cur)                  Serial.print('|');
+        Serial.print("  raw:");
+        Serial.print(presenceVal);
+        if (abs(emaVal) < PRESENCE_CUTOFF) Serial.print("  [no presence]");
+        Serial.println();
+    }
+    else
+    {
+        Serial.println("  [SWEEP TEST — no sensor connected]");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,16 +286,20 @@ void setup()
     Wire1.begin();
     i2cScan();
 
-    // -- Distance sensor --
+    // -- Distance sensor (optional — skipped if not connected) --
     Serial.println("[INIT] Starting STHS34PF80...");
     if (mySensor.begin(STHS34PF80_I2C_ADDRESS, Wire1) == false)
     {
-        Serial.println("[ERROR] STHS34PF80 not found — check wiring. Halting.");
-        while (1);
+        Serial.println("[WARN] STHS34PF80 not found — running PCA9685 sweep test.");
+        sensorFound = false;
     }
-    delay(1000);
-    mySensor.setTmosODR(STHS34PF80_TMOS_ODR_AT_30Hz);
-    Serial.println("[INIT] STHS34PF80 ready, ODR=30Hz.");
+    else
+    {
+        delay(1000);
+        mySensor.setTmosODR(STHS34PF80_TMOS_ODR_AT_30Hz);
+        Serial.println("[INIT] STHS34PF80 ready, ODR=30Hz.");
+        sensorFound = true;
+    }
 
     // -- Servo driver --
     Serial.println("[INIT] Starting PCA9685...");
@@ -305,8 +320,42 @@ void setup()
 // LOOP
 // ---------------------------------------------------------------------------
 
+// No-sensor test: slowly ramps all servos CW then CCW then stops, proving
+// the PCA9685 is receiving commands. One full cycle every ~6 seconds.
+void runSweepTest()
+{
+    unsigned long t   = millis();
+    unsigned long pos = t % 6000;   // 6-second cycle
+
+    int pwmVal;
+    if      (pos < 1000) pwmVal = SERVO_STOP;                              // 0–1s:  stopped
+    else if (pos < 2500) pwmVal = map(pos, 1000, 2500, SERVO_STOP, SERVO_MAX); // 1–2.5s: ramp CW
+    else if (pos < 3000) pwmVal = SERVO_MAX;                               // 2.5–3s: full CW
+    else if (pos < 4500) pwmVal = map(pos, 3000, 4500, SERVO_MAX, SERVO_MIN); // 3–4.5s: ramp CCW
+    else if (pos < 5000) pwmVal = SERVO_MIN;                               // 4.5–5s: full CCW
+    else                 pwmVal = map(pos, 5000, 6000, SERVO_MIN, SERVO_STOP); // 5–6s:  return to stop
+
+    for (int ch = 0; ch < NUM_CHANNELS; ch++)
+    {
+        pwm.setPWM(ch, 0, pwmVal);
+        servoPwm[ch] = pwmVal;
+    }
+
+    if (millis() - lastPrintMs >= 500)
+    {
+        lastPrintMs = millis();
+        printDisplay();
+    }
+}
+
 void loop()
 {
+    if (!sensorFound)
+    {
+        runSweepTest();
+        return;
+    }
+
     sths34pf80_tmos_drdy_status_t dataReady;
     mySensor.getDataReady(&dataReady);
 
@@ -319,7 +368,6 @@ void loop()
 
         updateServos();
 
-        // Redraw display at 2Hz
         if (millis() - lastPrintMs >= 500)
         {
             lastPrintMs = millis();
