@@ -1,7 +1,7 @@
 /******************************************************************************
   gears.ino
 
-  Version: 5.2
+  Version: 5.3
   Last Modified: 2026-06-05
 
   Overview:
@@ -44,6 +44,11 @@
                  Larger magnitude → faster / longer-range response.
 
   Changelog:
+    v5.3 (2026-06-05) - Fix: use abs(emaVal) in slope-intercept formula so
+                        far-range negative sensor readings map the same as
+                        positive ones. 8+/8- slopes guarantee always-mixed
+                        CW/CCW at any distance; all 16 channels reverse
+                        somewhere in the 3m→1ft detection range.
     v5.2 (2026-06-05) - Restore slope-intercept formula: slope*(emaVal-changeover)
                         gives true direction reversal at each servo's changeover
                         point. Changeovers spread 100-5200 so cascade of reversals
@@ -133,12 +138,13 @@ struct ServoConfig { float changeover; float slope; };
 ServoConfig channels[NUM_CHANNELS] = {
   //  ch   changeover   slope
   //
-  //  Changeovers spread 100→5200 so servos reverse direction in a cascade
-  //  as someone walks from detection range (~3m) down to 1 ft.
-  //  At far detection (emaVal≈100-300): most channels spinning in "far" direction.
-  //  At 3 ft (emaVal≈2100): about half have reversed.
-  //  At 1 ft (emaVal≈6000): all channels at full speed in "close" direction.
-  //  Slopes sized so each channel just reaches full speed at emaVal=6000.
+  //  8 positive slopes + 8 negative slopes = ALWAYS half CW, half CCW at any distance.
+  //  Changeovers spread 100→5200 so reversals cascade as person walks in from 3m:
+  //    Far (~3m, abs≈100-300): most channels in "far" direction, ch0/1 just reversed.
+  //    Mid (~3ft, abs≈2100):   roughly half have reversed, complex mix.
+  //    Close (~1ft, abs≈6000): all reversed — +slopes CW, -slopes CCW, all near full speed.
+  //  Formula uses abs(emaVal) so far-range negative sensor readings map correctly.
+  //  Slopes sized so each channel reaches full speed at abs(emaVal)=6000 (~1 ft).
   //
   /*  0 */ {  100,  0.026f },   // reverses just above detection threshold
   /*  1 */ {  100, -0.026f },
@@ -241,7 +247,8 @@ void updateServos()
         }
         else
         {
-            float target = channels[ch].slope * (emaVal - channels[ch].changeover);
+            // abs(emaVal) so far-range negative readings work the same as positive
+            float target = channels[ch].slope * (abs(emaVal) - channels[ch].changeover);
             pwmVal = SERVO_STOP + (int)(speedScale * target);
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
         }
@@ -343,7 +350,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { ; }
     Serial.println("----------------------------------------");
-    Serial.println("gears.ino v5.2");
+    Serial.println("gears.ino v5.3");
     Serial.println("----------------------------------------");
 
     Wire1.begin();
