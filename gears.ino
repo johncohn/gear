@@ -1,7 +1,7 @@
 /******************************************************************************
   gears.ino
 
-  Version: 5.3
+  Version: 5.4
   Last Modified: 2026-06-05
 
   Overview:
@@ -44,6 +44,15 @@
                  Larger magnitude → faster / longer-range response.
 
   Changelog:
+    v5.4 (2026-06-05) - Fix idle spinning: PRESENCE_CUTOFF 75→150 (clear of
+                        background noise); signalFade multiplier (0→1 over
+                        FADE_RANGE=400 above cutoff) tapers speeds at detection
+                        edge — provides soft entry and natural soft exit as person
+                        walks away. speedScale = wakeRamp × signalFade × MAX_SPEED.
+                        MAX_SPEED=0.5 halves all servo speeds globally.
+                        PCA9685 full-off (setPWM 4096) when speed=0 removes PWM
+                        signal entirely so no calibration drift can spin servos.
+                        Display shows combined speed% while active.
     v5.3 (2026-06-05) - Fix: use abs(emaVal) in slope-intercept formula so
                         far-range negative sensor readings map the same as
                         positive ones. 8+/8- slopes guarantee always-mixed
@@ -102,11 +111,21 @@
 // Total bar chars for the serial display (fits on a 120-col line).
 #define MAX_BARS        100
 
-// abs(emaVal) below this = nobody home.
-#define PRESENCE_CUTOFF  75
+// abs(emaVal) below this = nobody home; must be clearly above background noise.
+#define PRESENCE_CUTOFF    150
 
-// Soft-on ramp duration when waking from shutdown (ms).
+// Signal range above PRESENCE_CUTOFF over which speedScale fades 0→1.
+// Provides soft entry from far range and soft exit as person walks away.
+// Full speed reached at abs(emaVal) = PRESENCE_CUTOFF + FADE_RANGE.
+#define FADE_RANGE         400
+
+// Time-based soft-on ramp when waking (ms). Guards against sudden start
+// if person is already close when system first detects them.
 #define SOFTON_MS          1500
+
+// Global speed ceiling: 1.0 = full range (SERVO_MIN..SERVO_MAX),
+// 0.5 = half speed. Applied on top of all other scaling.
+#define MAX_SPEED          0.5f
 
 // ---------------------------------------------------------------------------
 // SERVO SETTINGS  (apply to all channels)
@@ -178,8 +197,9 @@ bool    sensorFound       = false;
 int     sessionMaxBars    = 0;
 int     servoPwm[NUM_CHANNELS];
 
-bool          systemActive    = false;
-unsigned long wakeTimeMs      = 0;   // when the most recent wake-up started
+bool          systemActive     = false;
+unsigned long wakeTimeMs       = 0;   // when the most recent wake-up started
+float         currentSpeedScale = 0.0f;
 
 unsigned long lastPrintMs     = 0;
 
@@ -213,16 +233,15 @@ void i2cScan()
 void stopAllServos()
 {
     for (int ch = 0; ch < NUM_CHANNELS; ch++)
-        pwm.setPWM(ch, 0, SERVO_STOP);
+        pwm.setPWM(ch, 0, 4096);   // full-off: remove PWM signal
 }
 
 void updateServos()
 {
-    unsigned long now     = millis();
-    bool          present = (abs(emaVal) >= PRESENCE_CUTOFF);
+    unsigned long now    = millis();
+    float         signal = abs(emaVal);
+    bool          present = (signal >= PRESENCE_CUTOFF);
 
-    // Immediate shutdown when presence is lost; soft-on ramp when waking.
-    // EMA smoothing (300ms) already debounces momentary dropouts.
     if (!systemActive && present)
     {
         systemActive = true;
@@ -233,27 +252,36 @@ void updateServos()
         systemActive = false;
     }
 
-    // Soft-on ramp: 0.0 → 1.0 over SOFTON_MS after wake
-    float speedScale = systemActive
+    // wakeRamp: time-based 0→1 over SOFTON_MS — prevents sudden lurch if
+    // person is already close when system first detects them.
+    float wakeRamp = systemActive
         ? constrain((float)(now - wakeTimeMs) / SOFTON_MS, 0.0f, 1.0f)
         : 0.0f;
 
+    // signalFade: signal-based 0→1 over FADE_RANGE above PRESENCE_CUTOFF.
+    // Naturally tapers speed to zero as person walks away toward the edge
+    // of detection, and ramps up smoothly from first contact at far range.
+    float signalFade = constrain((signal - PRESENCE_CUTOFF) / (float)FADE_RANGE,
+                                 0.0f, 1.0f);
+
+    currentSpeedScale = wakeRamp * signalFade * MAX_SPEED;
+
     for (int ch = 0; ch < NUM_CHANNELS; ch++)
     {
-        int pwmVal;
-        if (speedScale == 0.0f)
+        if (currentSpeedScale == 0.0f)
         {
-            pwmVal = SERVO_STOP;
+            // Full-off: remove PWM signal entirely so no calibration drift can spin the servo
+            pwm.setPWM(ch, 0, 4096);
+            servoPwm[ch] = SERVO_STOP;
         }
         else
         {
-            // abs(emaVal) so far-range negative readings work the same as positive
-            float target = channels[ch].slope * (abs(emaVal) - channels[ch].changeover);
-            pwmVal = SERVO_STOP + (int)(speedScale * target);
+            float target = channels[ch].slope * (signal - channels[ch].changeover);
+            int pwmVal = SERVO_STOP + (int)(currentSpeedScale * target);
             pwmVal = constrain(pwmVal, SERVO_MIN, SERVO_MAX);
+            pwm.setPWM(ch, 0, pwmVal);
+            servoPwm[ch] = pwmVal;
         }
-        pwm.setPWM(ch, 0, pwmVal);
-        servoPwm[ch] = pwmVal;
     }
 }
 
@@ -317,22 +345,13 @@ void printDisplay()
         Serial.println();
         if (!systemActive)
         {
-            Serial.println("  [OFF — no presence]");
+            Serial.println("  [OFF]");
         }
         else
         {
-            unsigned long elapsed = millis() - wakeTimeMs;
-            if (elapsed < SOFTON_MS)
-            {
-                int pct = (int)(elapsed * 100 / SOFTON_MS);
-                Serial.print("  [RAMP ");
-                Serial.print(pct);
-                Serial.println("%]");
-            }
-            else
-            {
-                Serial.println("  [ACTIVE]");
-            }
+            Serial.print("  [ACTIVE  speed:");
+            Serial.print((int)(currentSpeedScale * 100));
+            Serial.println("%]");
         }
     }
     else
@@ -350,7 +369,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial) { ; }
     Serial.println("----------------------------------------");
-    Serial.println("gears.ino v5.3");
+    Serial.println("gears.ino v5.4");
     Serial.println("----------------------------------------");
 
     Wire1.begin();
