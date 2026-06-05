@@ -125,7 +125,7 @@
 
 // Global speed ceiling: 1.0 = full range (SERVO_MIN..SERVO_MAX),
 // 0.5 = half speed. Applied on top of all other scaling.
-#define MAX_SPEED          0.5f
+#define MAX_SPEED          0.25f
 
 // ---------------------------------------------------------------------------
 // SERVO SETTINGS  (apply to all channels)
